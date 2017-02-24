@@ -145,8 +145,34 @@ class Weixin(object):
 
     def _echo(self, stri):
         if self.DEBUG:
-            sys.stdout.write(stri)
-            sys.stdout.flush()
+            with open('log', 'w') as f:
+                f.write(str(stri)) 
+
+    def _dd(self, value):
+        self._echo(value)
+        exit()            
+
+    @catchKeyboardInterrupt
+    def start(self):
+        print('[*] starting...')
+        while True:
+            self._run('[*] get UUID', self.getuuid)
+            print('[*] uuid : ', self.uuid)
+            print('[*] QR code :')
+            self.printQr()
+            print('Scan the QR code for login')
+            waitforlogin = self.waitForLogin()
+            if not waitforlogin:
+                continue
+                print('Please confirm login')
+
+            if not self.waitForLogin(0):
+                continue
+            break
+        self._run('[*] login ing...', self.login)
+        self._run('[*] webwxinit init', self.webwxinit)
+        self._run('[*] webwxstatusnotify', self.webwxstatusnotify)
+        self._run('[*] webwxgetcontact', self.webwxgetcontact)            
 
     def waitForLogin(self, tip=1):
         time.sleep(tip)
@@ -239,8 +265,7 @@ class Weixin(object):
         url = self.base_uri + '/webwxgetcontact?pass_ticket=%s&skey=%s&r=%s' % (
             self.pass_ticket, self.skey, int(time.time()))
         dic = json.loads(self.session.post(url, data={}).text, object_hook=_decode_dict)
-        print(dic)
-        exit()
+        self._dd(type(dic))
         self.MemberCount = dic['MemberCount'] - 1
         self.MemberList = dic['MemberList']
         ContactList = self.MemberList[:]
@@ -260,27 +285,7 @@ class Weixin(object):
         self._echo(ContactList)
         return True
 
-    @catchKeyboardInterrupt
-    def start(self):
-        print('[*] starting...')
-        while True:
-            self._run('[*] get UUID', self.getuuid)
-            print('[*] uuid : ', self.uuid)
-            print('[*] QR code :')
-            self.printQr()
-            print('Scan the QR code for login')
-            waitforlogin = self.waitForLogin()
-            if not waitforlogin:
-                continue
-                print('Please confirm login')
-
-            if not self.waitForLogin(0):
-                continue
-            break
-        self._run('[*] login ing...', self.login)
-        self._run('[*] webwxinit init', self.webwxinit)
-        self._run('[*] webwxstatusnotify', self.webwxstatusnotify)
-        self._run('[*] webwxgetcontact', self.webwxgetcontact)
+    
 
 
 class UnicodeStreamFilter:
