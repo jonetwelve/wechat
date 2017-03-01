@@ -78,6 +78,8 @@ class Weixin(object):
         self.session = requests.session()
         self.session.headers.update(
             {'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:51.0) Gecko/20100101 Firefox/51.0'})
+        if not os.path.exists(self.saveFolder):
+            os.makedirs(self.saveFolder)
 
     def loadConf(self, config):
         if config['DEBUG']:
@@ -450,9 +452,14 @@ class Weixin(object):
 
     def recorder(self, msg):
         #from, to, type, content
-        if not os.path.exists(self.saveFolder):
-            os.makedirs(self.saveFolder)
-        pass
+        msg_dir = os.path.join(self.saveFolder, 'message')
+        if not os.path.exists(msg_dir):
+            os.makedirs(msg_dir)
+        msg_file = os.path.join(msg_dir, datetime.datetime.now().strftime('%Y_%m_%d')) + '.csv'
+        now = datetime.datetime.now().strftime('%H:%M:%S')
+        with open(msg_file, 'a') as f:
+            content = '"%s","%s","%s","%s","%s"\n' % (now, msg['type'], msg['from'], msg['to'], msg['content'])
+            f.write(content)
 
     def robot_answer(self, content):
         url = 'http://www.tuling123.com/openapi/api'
