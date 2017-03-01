@@ -443,7 +443,10 @@ class Weixin(object):
                 raw_msg = {'raw_msg': msg, 'message': '%s send a video' % name}
             elif msgType == 10002:
                 raw_msg = {'raw_msg': msg, 'message': '%s send a business card' % name}
-            self._showMsg(raw_msg)
+            try:
+                self._showMsg(raw_msg)
+            except:
+                pass
 
     def recorder(self, msg):
         #from, to, type, content
