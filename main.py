@@ -1,8 +1,8 @@
 #!/usr/bin/python3
-# -*- coding:utf-8 -*-
+# coding=utf-8
 
 from urllib import parse
-import time
+import time, datetime
 import requests
 import re
 import qrcode
@@ -11,6 +11,7 @@ import json
 import random
 import os
 import sys
+import multiprocessing
 
 
 def catchKeyboardInterrupt(fn):
@@ -21,34 +22,6 @@ def catchKeyboardInterrupt(fn):
             print('\n[*] 强制退出程序')
 
     return wrapper
-
-
-def _decode_list(data):
-    rv = []
-    for item in data:
-        if isinstance(item, str):
-            item = item.encode('utf-8')
-        elif isinstance(item, list):
-            item = _decode_list(item)
-        elif isinstance(item, dict):
-            item = _decode_dict(item)
-        rv.append(item)
-    return rv
-
-
-def _decode_dict(data):
-    rv = {}
-    for (key, value) in data.items():
-        if isinstance(key, str):
-            key = key.encode('utf-8')
-        if isinstance(value, str):
-            value = value.encode('utf-8')
-        elif isinstance(value, list):
-            value = _decode_list(value)
-        elif isinstance(value, dict):
-            value = _decode_dict(value)
-        rv[key] = value
-    return rv
 
 
 class Weixin(object):
@@ -80,10 +53,9 @@ class Weixin(object):
         self.GroupMemeberList = []  # 群友
         self.PublicUsersList = []  # 公众号／服务号
         self.SpecialUsersList = []  # 特殊账号
-        self.autoReplyMode = False
+        self.autoReplay = False
         self.syncHost = ''
         self.user_agent = 'Mozilla/5.0 (X11; Linux x86_64; rv:51.0) Gecko/20100101 Firefox/51.0'
-        self.interactive = False
         self.autoOpen = False
         self.saveFolder = os.path.join(os.getcwd(), 'saved')
         self.saveSubFolders = {'webwxgeticon': 'icons', 'webwxgetheadimg': 'headimgs', 'webwxgetmsgimg': 'msgimgs',
@@ -143,17 +115,24 @@ class Weixin(object):
             print(str + ' : False\n[*] exit')
             exit()
 
-    def _echo(self, stri):
+    def _loger(self, stri):
         if self.DEBUG:
             with open('log', 'w') as f:
-                f.write(str(stri)) 
+                f.write(str(stri))
 
     def _dd(self, value):
-        self._echo(value)
-        exit()            
+        self._loger(value)
+        exit()
+
+    def _post(self, url, params):
+        r = self.session.post(url, data=params)
+        r.encoding = 'utf-8'
+        return json.loads(r.text)
 
     @catchKeyboardInterrupt
     def start(self):
+        if sys.platform.startswith('win') and input('Not support win. Continue ? (y/n)') == 'n':
+            exit()
         print('[*] starting...')
         while True:
             self._run('[*] get UUID', self.getuuid)
@@ -172,7 +151,23 @@ class Weixin(object):
         self._run('[*] login ing...', self.login)
         self._run('[*] webwxinit init', self.webwxinit)
         self._run('[*] webwxstatusnotify', self.webwxstatusnotify)
-        self._run('[*] webwxgetcontact', self.webwxgetcontact)            
+        self._run('[*] webwxgetcontact', self.webwxgetcontact)
+        self._run('[*] webwxbatchgetcontact', self.webwxbatchgetcontact)
+        print('[*] Total contacter count %d, load %d' % (self.MemberCount, len(self.MemberList)))
+        print('[*] Total %d groups, %d members, %d special group, %d public group' \
+              % (len(self.GroupList), len(self.ContactList), len(self.SpecialUsersList), len(self.PublicUsersList)))
+        if input('-> Start auto replay (y/n)') == 'y':
+            self.autoReplay = True
+            print('[*] auto replay on')
+        else:
+            print('[*] auto replay off')
+
+        listenProcess = multiprocessing.Process(target=self.listenMsgMode)
+        listenProcess.start()
+
+        time.sleep(2)
+        self.run()
+        return False
 
     def waitForLogin(self, tip=1):
         time.sleep(tip)
@@ -186,10 +181,8 @@ class Weixin(object):
         code = pm.group(1)
 
         if code == '201':
-            self._echo('---> wait for login 201 success')
             return True
         elif code == '200':
-            self._echo('---> wait for login 200 success')
             pm = re.search(r'window.redirect_uri="(\S+?)";', data)
             r_uri = pm.group(1) + '&fun=new'
             self.redirect_uri = r_uri
@@ -264,8 +257,7 @@ class Weixin(object):
         SpecialUsers = self.SpecialUsers
         url = self.base_uri + '/webwxgetcontact?pass_ticket=%s&skey=%s&r=%s' % (
             self.pass_ticket, self.skey, int(time.time()))
-        dic = json.loads(self.session.post(url, data={}).text, object_hook=_decode_dict)
-        self._dd(type(dic))
+        dic = self._post(url, {})
         self.MemberCount = dic['MemberCount'] - 1
         self.MemberList = dic['MemberList']
         ContactList = self.MemberList[:]
@@ -276,37 +268,365 @@ class Weixin(object):
             elif (i['VerifyFlag'] & 8) != 0:
                 ContactList.remove(i)
                 self.PublicUsersList.append(i)
-            elif '@@' in i['UserName']:
+            elif i['UserName'].startswith('@@'):
                 ContactList.remove(i)
                 self.GroupList.append(i)
             elif i['UserName'] == self.User['UserName']:
                 ContactList.remove(i)
+                # example of i
+                # {
+                # 'Uin': 0,
+                # 'UserName': '@076508dacb11a8942cf6453efc15e0b7',
+                # 'NickName': 'username',
+                # 'HeadImgUrl': '/cgi-bin/mmwebwx-bin/webwxgeticon?seq=490560&username=@076508dacb11a8942cf6453efc15e0b7&skey=@crypt_d344aab7_49b8b9fcaca5ed1f48d3bf4b6c8c38ea',
+                # 'ContactFlag': 1,
+                # 'MemberCount': 0,
+                # 'MemberList': [],
+                # 'RemarkName': '',
+                # 'HideInputBarFlag': 0,
+                # 'Sex': 1,
+                # 'Signature': '茫茫人海觅知音',
+                # 'VerifyFlag': 0,
+                # 'OwnerUin': 0,
+                # 'PYInitial': 'MJW',
+                # 'PYQuanPin': 'majunwei',
+                # 'RemarkPYInitial': '',
+                # 'RemarkPYQuanPin': '',
+                # 'StarFriend': 0,
+                # 'AppAccountFlag': 0,
+                # 'Statues': 0,
+                # 'AttrStatus': 4131,
+                # 'Province': '甘肃',
+                # 'City': '兰州市',
+                # 'Alias': '',
+                # 'SnsFlag': 0,
+                # 'UniFriend': 0,
+                # 'DisplayName': '',
+                # 'ChatRoomId': 0,
+                # 'KeyWord': 'bei',
+                # 'EncryChatRoomId': '',
+                # 'IsOwner': 0
+                # }
         self.ContactList = ContactList
-        self._echo(ContactList)
         return True
 
-    
+    def webwxbatchgetcontact(self):
+        """批量获取成员信息"""
+        url = self.base_uri + '/webwxbatchgetcontact?type=ex&r=%s&pass_ticket=%s' % (int(time.time()), self.pass_ticket)
+        params = {
+            'BaseRequest': self.BaseRequest,
+            'Count': len(self.GroupList),
+            'List': [{"UserName": group['UserName'], "EncryChatRoomId": ""} for group in self.GroupList]
+        }
+        dic = self._post(url, json.dumps(params))
+        self.GroupList = dic['ContactList']
+        for contact in dic['ContactList']:
+            for member in contact['MemberList']:
+                self.GroupMemeberList.append(member)
+                # example of member
+                # {
+                # 'Uin': 0,
+                # 'UserName': '@8aa415e0e56beabc41599ddab5e957da',
+                # 'NickName': 'Pinko',
+                # 'AttrStatus': 106549,
+                # 'PYInitial': '',
+                # 'PYQuanPin': '',
+                # 'RemarkPYInitial': '',
+                # 'RemarkPYQuanPin': '',
+                # 'MemberStatus': 0,
+                # 'DisplayName': '',
+                # 'KeyWord': 'pin'
+                # }
 
+        return True
 
-class UnicodeStreamFilter:
-    def __init__(self, target):
-        self.target = target
-        self.encoding = 'utf-8'
-        self.errors = 'replace'
-        self.encode_to = self.target.encoding
+    def listenMsgMode(self):
+        print('[*] sync message')
+        self._run('[*] test the sync line', self.testsynccheck)
 
-    def write(self, s):
-        if type(s) == str:
-            s = s.decode('utf-8')
-        s = s.encode(self.encode_to, self.errors).decode(self.encode_to)
-        self.target.write(s)
+        redEnvelope = 0
 
-    def flush(self):
-        self.target.flush()
+        while True:
+            self.lastCheckTs = time.time()
+            retcode, selector = self.syncCheck()
+            if retcode == '1100':
+                print('[*] wechat login on the phone')
+                break
 
+            if retcode == '1101':
+                print('[*] wechat login on the other device')
+                break
 
-if sys.stdout.encoding == 'cp936':
-    sys.stdout = UnicodeStreamFilter(sys.stdout)
+            if retcode == '0':
+                if selector == '0':
+                    time.sleep(1)
+                elif selector == '2':
+                    r = self.webwxsync()
+                    if r is not None:
+                        self.handleMsg(r)
+                elif selector == '6':
+                    redEnvelope += 1
+                    print('[*] Get gift %d' % redEnvelope)
+                elif selector == '7':
+                    print('[*] Handle on the phone')
+                    self.webwxsync()
+            if (time.time() - self.lastCheckTs) <= 20:
+                time.sleep(time.time() - self.lastCheckTs)
+
+    def testsynccheck(self):
+        syncHost = ['webpush.wx.qq.com']
+        for host in syncHost:
+            self.syncHost = host
+            retcode, selector = self.syncCheck()
+            if retcode == '0':
+                return True
+        return False
+
+    def syncCheck(self):
+        url = 'https://' + self.syncHost + '/cgi-bin/mmwebwx-bin/synccheck?r=%s&sid=%s&uin=%s&skey=%s&deviceid=%s&synckey=%s&_=%s' \
+                                           % (int(time.time()), self.sid, self.uin, self.skey, self.deviceId, self.synckey, int(time.time()))
+        data = self.session.get(url).text
+        if data == '':
+            return [-1, -1]
+        pm = re.search(r'window.synccheck={retcode:"(\d+)",selector:"(\d+)"}', data)
+        retcode = pm.group(1)
+        selector = pm.group(2)
+        return [retcode, selector]
+
+    def webwxsync(self):
+        url = self.base_uri + '/webwxsync?sid=%s&skey=%s&pass_ticket=%s' % (self.sid, self.skey, self.pass_ticket)
+        params = {
+            'BaseRequest': self.BaseRequest,
+            'SyncKey': self.SyncKey,
+            'rr': int(time.time())
+        }
+        dic = self._post(url, json.dumps(params))
+        if dic == '':
+            return None
+        if dic['BaseResponse']['Ret'] == 0:
+            self.SyncKey = dic['SyncKey']
+            self.synckey = '|'.join([str(keyVal['Key']) + '_' + str(keyVal['Val']) for keyVal in self.SyncKey['List']])
+        return dic
+
+    def handleMsg(self, r):
+        for msg in r['AddMsgList']:
+            msgType = msg['MsgType']
+            name = self.getUserRemarkName(msg['FromUserName'])
+            content = msg['Content'].replace('&lt;', '<').replace('&gt;', '>')
+
+            self.recorder({'to': 'jone', 'from': name, 'type': msgType, 'content': content})
+            if msgType == 1:
+                raw_msg = {'raw_msg': msg}
+                if self.autoReplay:
+                    # 自己的消息不回复
+                    reply = self.robot_answer(content) + '[机器人]'
+                    if self.webwxsendmsg(reply, msg['FromUserName']):
+                        print('auto reply:', reply)
+                        self.recorder({'from': 'jone', 'to': msg['FromUserName'], 'type': '1', 'content': reply})
+                    else:
+                        print('auto reply fail')
+            elif msgType == 3:
+                raw_msg = {'raw_msg': msg, 'message': '%s send a image' % name}
+            elif msgType == 34:
+                raw_msg = {'raw_msg': msg, 'message': '%s send a voice' % name}
+            elif msgType == 42:
+                raw_msg = {'raw_msg': msg, 'message': '%s send a business card' % name}
+            elif msgType == 47:
+                raw_msg = {'raw_msg': msg, 'message': '%s send a animation' % name}
+            elif msgType == 49:
+                raw_msg = {'raw_msg': msg, 'message': '%s send a link' % name}
+            # elif msgType == 51:
+            #     pass
+            #     # 打开联系人对话界面
+            #     raw_msg = {'raw_msg': msg, 'message': '[*] Get the contact info success'}
+            elif msgType == 62:
+                raw_msg = {'raw_msg': msg, 'message': '%s send a video' % name}
+            elif msgType == 10002:
+                raw_msg = {'raw_msg': msg, 'message': '%s send a business card' % name}
+            self._showMsg(raw_msg)
+
+    def recorder(self, msg):
+        #from, to, type, content
+        if not os.path.exists(self.saveFolder):
+            os.makedirs(self.saveFolder)
+        pass
+
+    def robot_answer(self, content):
+        url = 'http://www.tuling123.com/openapi/api'
+        data = {'key': 'c85e470188434662abd32b238b03e4d4', 'info': content}
+        r = json.loads(requests.post(url, data).text)
+        return r['text']
+
+    def webwxsendmsg(self, word, to='filehelper'):
+        url = self.base_uri + '/webwxsendmsg?pass_ticket=%s' % (self.pass_ticket)
+        clientMsgId = str(int(time.time() * 1000)) + str(random.random())[:5].replace('.', '')
+        params = {
+            'BaseRequest': self.BaseRequest,
+            'Msg': {
+                "Type": 1,
+                "Content": word,
+                "FromUserName": self.User['UserName'],
+                "ToUserName": to,
+                "LocalID": clientMsgId,
+                "ClientMsgId": clientMsgId
+            }
+        }
+        headers = {'content-type': 'application/json; charset=UTF-8', 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:51.0) Gecko/20100101 Firefox/51.0'}
+        r = requests.post(url, json.dumps(params, ensure_ascii=False).encode('utf8'), headers=headers)
+        dic = r.json()
+        return dic['BaseResponse']['Ret'] == 0
+
+    def _showMsg(self, message):
+        srcName = None
+        dstName = None
+        groupName = None
+        content = None
+        msg = message
+
+        if msg['raw_msg']:
+            srcName = self.getUserRemarkName(msg['raw_msg']['FromUserName'])
+            dstName = self.getUserRemarkName(msg['raw_msg']['ToUserName'])
+            content = msg['raw_msg']['Content'].replace('&lt;', '<').replace('&gt;', '>')
+            message_id = msg['raw_msg']['MsgId']
+
+            if content.find('http://weixin.qq.com/cgi-bin/redirectforward?args=') != -1:
+                # 位置消息
+                content = '%s send a position' % srcName
+
+            if msg['raw_msg']['ToUserName'] == 'filehelper':
+                # 文件传输助手
+                dstName = 'file helper'
+
+            if msg['raw_msg']['FromUserName'][:2] == '@@':
+                # 接收到来自群的消息
+                if ":<br/>" in content:
+                    [people, content] = content.split(':<br/>', 1)
+                    groupName = srcName
+                    srcName = self.getUserRemarkName(people)
+                    dstName = 'GROUP'
+                else:
+                    groupName = srcName
+                    srcName = 'SYSTEM'
+            elif msg['raw_msg']['ToUserName'][:2] == '@@':
+                # 自己发给群的消息
+                groupName = dstName
+                dstName = 'GROUP'
+            if content == '收到红包，请在手机上查看':
+                msg['message'] = content
+
+            if 'message' in msg.keys():
+                content = msg['message']
+
+            if groupName != None:
+                print('[%s] %s -> %s: %s' % (
+                    groupName.strip(), srcName.strip(), dstName.strip(), content.replace('<br/>', '\n')))
+            else:
+                print('%s -> %s: %s' % (srcName.strip(), dstName.strip(), content.replace('<br/>', '\n')))
+
+    def getUserRemarkName(self, id):
+        name = 'Unknown group' if id[:2] == '@@' else 'Foreigner'
+        if id == self.User['UserName']:
+            return self.User['NickName']
+        if id[:2] == '@@':
+            name = self.getGroupName(id)
+        else:
+            for member in self.SpecialUsersList:
+                if member['UserName'] == id:
+                    name = member['NickName']
+            for member in self.PublicUsersList:
+                if member['UserName'] == id:
+                    name = member['NickName']
+            for member in self.ContactList:
+                if member['UserName'] == id:
+                    name = member['NickName']
+            for member in self.GroupMemeberList:
+                if member['UserName'] == id:
+                    name = member['NickName']
+        return name
+
+    def getGroupName(self, id):
+        name = 'Unknown group'
+        for member in self.GroupList:
+            if member['UserName'] == id:
+                name = member['NickName']
+        if name == 'Unknown group':
+            GroupList = self.getNameById(id)
+            for group in GroupList:
+                self.GroupList.append(group)
+                if group['UserName'] == id:
+                    name = group['NickName']
+                    MemberList = group['MemberList']
+                    for member in MemberList:
+                        self.GroupMemeberList.append(member)
+        return name
+
+    def getNameById(self, id):
+        url = self.base_uri + '/webwxbatchgetcontact?type=ex&r=%s&pass_ticket=%s' % (int(time.time()), self.pass_ticket)
+        params = {
+            'BaseRequest': self.BaseRequest,
+            "Count": 1,
+            "List": [{"UserName": id, "EncryChatRoomId": ""}]
+        }
+        dic = self._post(url, json.dumps(params))
+
+        if dic == '':
+            return None
+        return dic['ContactList']
+
+    def run(self):
+        self.help()
+        while True:
+            text = input().strip()
+            if text == 'q':
+                print('[*] quit')
+                exit()
+            elif text == 'h':
+                self.help()
+            elif text == 'a':
+                self.autoReplay = False if self.autoReplay else True
+            elif text == 'f':
+                for value in self.ContactList:
+                    print("NickName:%s----Alias:%s----UserName:%s" % (
+                        value['NickName'], value['Alias'], value['UserName']))
+            elif text == 'g':
+                for value in self.GroupList:
+                    print("NickName:%s----MemberCount:%s----UserName:%s" % (value['NickName'], value['UserName'], value['UserName']))
+            elif text == 'gf':
+                for value in self.GroupMemeberList:
+                    print("NickName:%s----UserName:%s" % (value['NickName'], value['UserName']))
+            elif text[:2] == '>>':
+                name, word = text[2:].split(' ', 1)
+                self.sendMsg(name, word)
+                self.recorder({'from': 'jone', 'to': name, 'type': '1', 'content': word})
+
+    def sendMsg(self, name, content):
+        id = self.getUserId(name)
+        if id:
+            if not self.webwxsendmsg(content, id):
+                print('[*] send message fail')
+        else:
+            print('[*] %s not exist' % name)
+
+    def getUserId(self, name):
+        for member in self.MemberList:
+            if name == member['RemarkName'] or name == member['NickName']:
+                return member['UserName']
+        return None
+
+    def help(self):
+        robot = 'on' if self.autoReplay else 'off'
+        print('''
+==============================================================
+>>[昵称或ID][空格][内容] 给好友发送消息
+a 切换机器人 (now %s)
+q 退出程序
+h 帮助
+f 好友列表
+g 群列表
+gf 群友列表
+==============================================================
+        ''' % robot)
+
 
 if __name__ == '__main__':
     wx = Weixin()
