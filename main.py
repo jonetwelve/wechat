@@ -59,7 +59,7 @@ class Weixin(object):
         self.autoOpen = False
         self.saveFolder = os.path.join(os.getcwd(), 'saved')
         self.saveSubFolders = {'webwxgeticon': 'icons', 'webwxgetheadimg': 'headimgs', 'webwxgetmsgimg': 'msgimgs',
-                               'webwxgetvideo': 'videos', 'webwxgetvoice': 'voices'}
+                               'webwxgetvideo': 'videos', 'webwxgetvoice': 'voices', 'msg': 'message'}
         self.appid = 'wx782c26e4c19acffb'
         self.lang = 'zh_CN'
         self.lastCheckTs = time.time()
@@ -80,6 +80,10 @@ class Weixin(object):
             {'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:51.0) Gecko/20100101 Firefox/51.0'})
         if not os.path.exists(self.saveFolder):
             os.makedirs(self.saveFolder)
+        for k in self.saveSubFolders:
+            rd = os.path.join(self.saveFolder, self.saveSubFolders[k])
+            if not os.path.exists(rd):
+                os.makedirs(rd)
 
     def loadConf(self, config):
         if config['DEBUG']:
@@ -415,10 +419,12 @@ class Weixin(object):
             msgType = msg['MsgType']
             name = self.getUserRemarkName(msg['FromUserName'])
             content = msg['Content'].replace('&lt;', '<').replace('&gt;', '>')
+            msgid = msg['MsgId']
 
             self.recorder({'to': 'jone', 'from': name, 'type': msgType, 'content': content})
             if msgType == 1:
                 raw_msg = {'raw_msg': msg}
+                self._showMsg(raw_msg)
                 if self.autoReplay:
                     # 自己的消息不回复
                     reply = self.robot_answer(content) + '[机器人]'
@@ -428,8 +434,10 @@ class Weixin(object):
                     else:
                         print('auto reply fail')
             elif msgType == 3:
-                raw_msg = {'raw_msg': msg, 'message': '%s send a image' % name}
+                image = self.webwxgetmsgimg(msgid)
+                raw_msg = {'raw_msg': msg, 'message': '%s send a image : %s' % (name, image)}
             elif msgType == 34:
+                voice = self.webwxgetmsgvoice(msgid)
                 raw_msg = {'raw_msg': msg, 'message': '%s send a voice' % name}
             elif msgType == 42:
                 raw_msg = {'raw_msg': msg, 'message': '%s send a business card' % name}
@@ -442,16 +450,55 @@ class Weixin(object):
             #     # 打开联系人对话界面
             #     raw_msg = {'raw_msg': msg, 'message': '[*] Get the contact info success'}
             elif msgType == 62:
+                voice = self.webwxgetmsgvideo(msgid)
                 raw_msg = {'raw_msg': msg, 'message': '%s send a video' % name}
             elif msgType == 10002:
                 raw_msg = {'raw_msg': msg, 'message': '%s send a business card' % name}
-            try:
-                self._showMsg(raw_msg)
-            except:
-                pass
+            
+            if msgType != 1:
+                try:
+                    self._showMsg(raw_msg)
+                except:
+                    pass
+
+    def webwxgetmsgimg(self, msgid):
+        url = self.base_uri + '/webwxgetmsgimg?MsgID=%s&skey=%s' % (msgid, self.skey)
+        data = requests.get(url).text
+        fn = str(time.time()).replace('.', '_') + '.jpg'
+        print(url)
+        return self._savefile(fn, data, 'webwxgetmsgimg')
+
+    def webwxgetmsgvoice(self, msgid):
+        url = self.base_uri + '/webwxgetvoice?msgid=%s&skey=%s' % (msgid, self.skey)
+        header = {
+            'User-Agent': self.user_agent,
+            'Referer': ' https://wx.qq.com/',
+            'Range': ' bytes=0-'
+        }
+        data = requests.get(url, headers=header).text
+        fn = str(time.time()).replace('.', '_') + '.mp3'
+        return self._savefile(fn, data, 'webwxgetvoice')
+
+    def webwxgetmsgvideo(self, msgid):
+        url = self.base_uri + '/webwxgetvideo?msgid=%s&skey=%s' % (msgid, self.skey)
+        header = {
+            'User-Agent': self.user_agent,
+            'Referer': ' https://wx.qq.com/',
+            'Range': ' bytes=0-'
+        }
+        data = requests.get(url, headers=header).text
+        fn = str(time.time()).replace('.', '_') + '.mp4'
+        return self._savefile(fn, data, 'webwxgetvideo')
+
+    def _savefile(self, fn ,data, folder):
+        file = os.path.join(self.saveFolder, self.saveSubFolders[folder], fn)
+        with open(file, 'w') as f:
+            f.write(data)
+
+        return file
 
     def recorder(self, msg):
-        #from, to, type, content
+        # from, to, type, content
         msg_dir = os.path.join(self.saveFolder, 'message')
         if not os.path.exists(msg_dir):
             os.makedirs(msg_dir)
