@@ -58,8 +58,7 @@ class Weixin(object):
         self.user_agent = 'Mozilla/5.0 (X11; Linux x86_64; rv:51.0) Gecko/20100101 Firefox/51.0'
         self.autoOpen = False
         self.saveFolder = os.path.join(os.getcwd(), 'saved')
-        self.saveSubFolders = {'webwxgeticon': 'icons', 'webwxgetheadimg': 'headimgs', 'webwxgetmsgimg': 'msgimgs',
-                               'webwxgetvideo': 'videos', 'webwxgetvoice': 'voices', 'msg': 'message'}
+        self.saveSubFolders = {'webwxgetmsgimg': 'msgimgs', 'webwxgetvideo': 'videos', 'webwxgetvoice': 'voices', 'msg': 'message'}
         self.appid = 'wx782c26e4c19acffb'
         self.lang = 'zh_CN'
         self.lastCheckTs = time.time()
@@ -463,19 +462,14 @@ class Weixin(object):
 
     def webwxgetmsgimg(self, msgid):
         url = self.base_uri + '/webwxgetmsgimg?MsgID=%s&skey=%s' % (msgid, self.skey)
-        data = requests.get(url).text
+        data = self.session.get(url).content
         fn = str(time.time()).replace('.', '_') + '.jpg'
         print(url)
         return self._savefile(fn, data, 'webwxgetmsgimg')
 
     def webwxgetmsgvoice(self, msgid):
         url = self.base_uri + '/webwxgetvoice?msgid=%s&skey=%s' % (msgid, self.skey)
-        header = {
-            'User-Agent': self.user_agent,
-            'Referer': ' https://wx.qq.com/',
-            'Range': ' bytes=0-'
-        }
-        data = requests.get(url, headers=header).text
+        data = self.session.get(url).content
         fn = str(time.time()).replace('.', '_') + '.mp3'
         return self._savefile(fn, data, 'webwxgetvoice')
 
@@ -486,13 +480,13 @@ class Weixin(object):
             'Referer': ' https://wx.qq.com/',
             'Range': ' bytes=0-'
         }
-        data = requests.get(url, headers=header).text
+        data = self.session.get(url, headers=header).content
         fn = str(time.time()).replace('.', '_') + '.mp4'
         return self._savefile(fn, data, 'webwxgetvideo')
 
     def _savefile(self, fn ,data, folder):
         file = os.path.join(self.saveFolder, self.saveSubFolders[folder], fn)
-        with open(file, 'w') as f:
+        with open(file, 'wb') as f:
             f.write(data)
 
         return file
