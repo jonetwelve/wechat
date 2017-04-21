@@ -426,7 +426,7 @@ class Weixin(object):
                 self._showMsg(raw_msg)
                 if self.autoReplay:
                     # 自己的消息不回复
-                    reply = self.robot_answer(content) + '[机器人]'
+                    reply = self.robot_answer(content) + '[忙碌中]'
                     if self.webwxsendmsg(reply, msg['FromUserName']):
                         print('auto reply:', reply)
                         self.recorder({'from': 'jone', 'to': msg['FromUserName'], 'type': '1', 'content': reply})
